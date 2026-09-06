@@ -27,6 +27,21 @@ files:
   # 原生包（macOS arm64/x64、Windows x64/arm64），wasm 那份只占体积
   - '!node_modules/@img/sharp-wasm32/**'
   - '!node_modules/@img/sharp-*-wasm32/**'
+  # 双架构原生包各留本架构那套。scripts/build-macos.mjs 打包前把另一架构的 darwin 平台包临时放进
+  # node_modules（arm64 机器上 npm 只装 darwin-arm64；以前 x64 DMG 里装的全是 arm64 的 esbuild /
+  # sharp / canvas，Intel 机器上这些模块根本加载不了）。两套都在时靠 ${arch} 宏只带本架构的。
+  # 顺序有讲究：electron-builder 的匹配是"命中正模式后只再看负模式，被负模式打掉后只再看正模式"，
+  # 所以先用负模式把两套都甩掉，紧跟着用正模式把本架构那套捞回来。改这里要跑 build-macos.mjs 的出厂检查
+  - '!node_modules/@esbuild/darwin-*/**'
+  - 'node_modules/@esbuild/darwin-${arch}/**'
+  - '!node_modules/@img/sharp-darwin-*/**'
+  - 'node_modules/@img/sharp-darwin-${arch}/**'
+  - '!node_modules/@img/sharp-libvips-darwin-*/**'
+  - 'node_modules/@img/sharp-libvips-darwin-${arch}/**'
+  - '!node_modules/@napi-rs/canvas-darwin-*/**'
+  - 'node_modules/@napi-rs/canvas-darwin-${arch}/**'
+  - '!node_modules/@vscode/ripgrep-darwin-*/**'
+  - 'node_modules/@vscode/ripgrep-darwin-${arch}/**'
 asarUnpack:
   # esbuild 同步 API 用 new Worker(__filename) 自举 + spawn @esbuild/<平台>/bin/esbuild，
   # worker_threads 与 exec 都吃不了 asar 内路径 —— 两个包必须整体落成真实文件
@@ -36,6 +51,9 @@ asarUnpack:
   # smartUnpack 通常会自己认出来，这里写明是为了 Windows 包（Mac 上交叉打时这些包是临时塞进去的）不靠运气
   - '**/node_modules/@img/**'
   - '**/node_modules/@napi-rs/**'
+  # 随包 ripgrep：沙箱库初始化时硬查 rg 存不存在（sandbox-manager.ts resolveBundledRipgrep 指向
+  # app.asar.unpacked 下这份真实文件）。留在 asar 里就执行不了、沙箱整段降级
+  - '**/node_modules/@vscode/ripgrep*/**'
 mac:
   # Electron 43 no longer supports macOS 11. Keep the packaged requirement explicit.
   minimumSystemVersion: '12.0'

@@ -1,6 +1,6 @@
 {
   "name": "openpipal",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "license": "Apache-2.0",
   "description": "OpenPipal - Universal AI Companion Assistant",
@@ -18,7 +18,7 @@
     "build:acp": "npm --prefix openpipal-acp run build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && npm run build:acp && electron-builder --dir",
-    "build:mac": "npm run build && npm run build:acp && electron-builder --mac",
+    "build:mac": "node scripts/build-macos.mjs",
     "build:win": "npm run build && npm run build:acp && electron-builder --win",
     "build:win:cross": "node scripts/build-windows.mjs",
     "release:verify-windows": "node scripts/verify-windows-release.mjs",
@@ -26,13 +26,14 @@
     "pretest:unit": "npm run electron:install",
     "test:unit": "vitest run",
     "open-source:verify-candidate": "node scripts/verify-open-source-candidate.mjs",
-    "release:build-macos": "npm run build && npm run build:acp && electron-builder --mac --config electron-builder.release.yml",
+    "release:build-macos": "node scripts/build-macos.mjs --config electron-builder.release.yml",
     "release:verify-macos": "node scripts/verify-macos-release.mjs",
     "open-source:inventory": "node scripts/generate-third-party-inventory.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.44",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@vscode/ripgrep": "^1.18.0",
     "dotenv": "^16.4.5",
     "esbuild": "^0.21.5",
     "i18next": "26.3.6",

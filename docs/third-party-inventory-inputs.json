@@ -6,6 +6,7 @@
     "@earendil-works/pi-ai",
     "@earendil-works/pi-coding-agent",
     "@modelcontextprotocol/sdk",
+    "@vscode/ripgrep",
     "dotenv",
     "esbuild",
     "i18next",

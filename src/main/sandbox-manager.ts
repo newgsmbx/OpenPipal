@@ -108,9 +108,40 @@ function getAllowedDomains(): string[] {
   return Array.from(new Set([...base, ...splitDomainList(process.env.OPENPIPAL_EXTRA_ALLOWED_DOMAINS)]))
 }
 
+/**
+ * 随包自带的 ripgrep 路径；没有随包那份时返回 null。
+ *
+ * SRT 初始化时硬性检查 `rg` 存不存在，找不到就抛错、整段 OS 沙箱降级成应用层安全模型，
+ * 用户看到的就是"系统沙箱未启用，已安全禁用 Shell 执行"。2026-09-05 实撞：所有者机器上
+ * Homebrew 的 ripgrep 被卸掉，同一个装机包前一天还是"沙箱已启用"；新装的机器上默认根本没有 rg。
+ * macOS 分支其实从不调用 rg（只有 Linux 用它扫危险文件），但检查是硬的，所以随包带一份
+ * （@vscode/ripgrep 按平台拆成可选依赖，MIT），沙箱不再看用户机器装了什么。
+ *
+ * 装机版里这个包在 app.asar 内，二进制执行不了；electron-builder.yml 的 asarUnpack 把它落成
+ * app.asar.unpacked 下的真实文件，这里直接指向那份真实文件，不靠 Electron 的 asar 补丁。
+ * 从 __dirname 往上找 node_modules：装机版是 app.asar/out/main，dev 是 out/main，单测是 src/main。
+ */
+export function resolveBundledRipgrep(): string | null {
+  const binary = process.platform === 'win32' ? 'rg.exe' : 'rg'
+  const rel = path.join('node_modules', '@vscode', `ripgrep-${process.platform}-${process.arch}`, 'bin', binary)
+  let dir = __dirname
+  for (let i = 0; i < 6; i++) {
+    const candidate = path
+      .join(dir, rel)
+      .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
+    if (fs.existsSync(candidate)) return candidate
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
 /** 构建沙箱运行时配置 */
 export function buildSandboxConfig(): SandboxRuntimeConfig {
+  const bundledRipgrep = resolveBundledRipgrep()
   return {
+    ...(bundledRipgrep ? { ripgrep: { command: bundledRipgrep } } : {}),
     filesystem: {
       denyRead: [...SENSITIVE_DIRS, ...SENSITIVE_READ_GLOBS],
       // 把 `.env.example` 这类模板从上面那条宽 `.env*` 拒读里放回来，**只在已登记的
@@ -329,6 +360,7 @@ export async function initSandbox(): Promise<boolean> {
 
     if (_enabled) {
       console.log('[Sandbox] 沙箱已启用（macOS Seatbelt）')
+      console.log(`[Sandbox] ripgrep 来源：${config.ripgrep ? `随包 ${config.ripgrep.command}` : 'PATH（随包那份缺失）'}`)
     } else {
       console.warn('[Sandbox] 沙箱初始化完成但未启用，降级到应用层安全模型')
     }

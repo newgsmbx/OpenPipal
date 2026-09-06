@@ -722,6 +722,19 @@
       "overrides": [
         "reviewed-baseline-default"
       ]
+    },
+    {
+      "id": "review-bundled-ripgrep-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "scripts/build-macos.mjs",
+        "tests/unit/macos-build-arch-packages.test.ts",
+        "tests/unit/sandbox-bundled-ripgrep.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ]
     }
   ],
   "classificationOnly": true,

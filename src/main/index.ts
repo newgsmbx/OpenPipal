@@ -369,9 +369,10 @@ app.whenReady().then(async () => {
   }
 
   initRoles()
-  // 沙箱要在 PATH 里找 ripgrep（`/opt/homebrew/bin/rg`，不在 launchd 那份里），找不到就整段
-  // 降级成应用层安全模型。2026-08-25 实测双击启动的时间线：沙箱 0.386s 就跑完了，而 PATH 探针
-  // 0.554s 才回来 —— 不等这一下，等于一个安全边界被无声地关掉。
+  // 沙箱用随包的 ripgrep（sandbox-manager.ts resolveBundledRipgrep），不再依赖 PATH 里有 rg；
+  // 只有随包那份缺失才退回 PATH（`/opt/homebrew/bin/rg`，不在 launchd 那份里），找不到就整段
+  // 降级成应用层安全模型。等 PATH 探针这一下是给这条退路留的：2026-08-25 实测双击启动的时间线，
+  // 沙箱 0.386s 就跑完了，而 PATH 探针 0.554s 才回来 —— 不等，退路等于被无声地关掉。
   // 但也不能无限等：探针最坏要走到第二档，把首屏卡住十几秒比沙箱降级更糟，所以封顶 2s
   // （超时就维持今天的行为，不会更坏）。
   await Promise.race([loginShellPathReady, new Promise((r) => setTimeout(r, 2000))])

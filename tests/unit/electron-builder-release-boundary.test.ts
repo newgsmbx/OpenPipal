@@ -104,15 +104,18 @@ describe('Electron Builder release boundary', () => {
     })
     // 每条打包路径都必须先产出适配器：漏一条就会把上一次的 dist 当成新的装进包里
     expect(packageManifest.scripts['build:acp']).toBe('npm --prefix openpipal-acp run build')
-    expect(packageManifest.scripts['build:mac']).toBe(
-      'npm run build && npm run build:acp && electron-builder --mac',
-    )
+    // macOS 两条路都走 build-macos.mjs：它先 build + build:acp，再把另一架构的 darwin 平台包放进
+    // node_modules 打包（否则 Intel 包里装的全是 arm64 二进制），打完做出厂检查
+    expect(packageManifest.scripts['build:mac']).toBe('node scripts/build-macos.mjs')
     expect(packageManifest.scripts['build:unpack']).toBe(
       'npm run build && npm run build:acp && electron-builder --dir',
     )
     expect(packageManifest.scripts['release:build-macos']).toBe(
-      'npm run build && npm run build:acp && electron-builder --mac --config electron-builder.release.yml',
+      'node scripts/build-macos.mjs --config electron-builder.release.yml',
     )
+    const macBuild = fs.readFileSync(path.resolve('scripts/build-macos.mjs'), 'utf8')
+    expect(macBuild).toContain("run('npm', ['run', 'build'])")
+    expect(macBuild).toContain("run('npm', ['run', 'build:acp'])")
     const hook = await import('../../scripts/embed-macos-release-build-manifest.mjs')
     expect(typeof hook.afterPack).toBe('function')
   })

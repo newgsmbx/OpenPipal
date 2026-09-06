@@ -47,6 +47,7 @@ verified.
 |---|---|---|---|---|
 | `@anthropic-ai/sandbox-runtime` | `^0.0.44` / `0.0.44` | Apache-2.0 | `anthropic-experimental/sandbox-runtime` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
 | `@modelcontextprotocol/sdk` | `^1.27.1` / `1.27.1` | MIT | `modelcontextprotocol/typescript-sdk` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
+| `@vscode/ripgrep` (+ per-platform `@vscode/ripgrep-<os>-<cpu>` optional packages) | `^1.18.0` / `1.18.0` | MIT (the bundled `rg` binary is BurntSushi/ripgrep, Unlicense OR MIT) | `microsoft/vscode-ripgrep` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
 | `dotenv` | `^16.4.5` / `16.6.1` | BSD-2-Clause | `motdotla/dotenv` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
 | `esbuild` | `^0.21.5` / `0.21.5` | MIT | `evanw/esbuild` | `package.json`, `LICENSE.md` — **LOCALLY DOCUMENTED** |
 | `i18next` | `26.3.6` / `26.3.6` | MIT | `i18next/i18next` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
