@@ -45,6 +45,8 @@ export interface PluginInfo {
   enabled: boolean
   skillNames: string[]
   mcpServerNames: string[]
+  /** hooks/ 下的规矩文件名(去后缀);能不能加载成功是 hook-registry 的事,这里只管发现 */
+  hookNames: string[]
   /** 非致命问题(未知字段、被跳过的 server 等),UI 提示用 */
   warnings: string[]
   /** manifest 级致命错误 → 整个插件被拒,组件一律不加载 */
@@ -302,6 +304,43 @@ export interface ScannedPlugin {
   info: PluginInfo
   skillsDir?: string
   mcpServers: PluginMcpServer[]
+  /** hooks/ 直接子文件的绝对路径(已 realpath 校验留在插件根内) */
+  hookFiles: string[]
+  /** 被单独关掉的规矩:同目录下 `<name>.ts.off`(文件式开关,改名即关、改回即开) */
+  disabledHookFiles: string[]
+}
+
+const HOOK_FILE_EXTENSIONS = new Set(['.ts', '.js', '.mjs', '.cjs'])
+export const HOOK_OFF_SUFFIX = '.off'
+
+/** hooks/ 只扫直接子文件:.ts/.js/.mjs/.cjs(及其 .off 版),跳过点文件与 .d.ts;软链解析后逃出插件根的跳过并告警 */
+function scanHooksDir(hooksDir: string, pluginRoot: string, warnings: string[]): { active: string[]; disabled: string[] } {
+  let entries: import('fs').Dirent[]
+  try {
+    entries = readdirSync(hooksDir, { withFileTypes: true })
+  } catch {
+    return { active: [], disabled: [] }
+  }
+  const active: string[] = []
+  const disabled: string[] = []
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const off = entry.name.endsWith(HOOK_OFF_SUFFIX)
+    const logical = off ? entry.name.slice(0, -HOOK_OFF_SUFFIX.length) : entry.name
+    if (logical.endsWith('.d.ts')) continue
+    const ext = logical.slice(logical.lastIndexOf('.')).toLowerCase()
+    if (!HOOK_FILE_EXTENSIONS.has(ext)) continue
+    const full = join(hooksDir, entry.name)
+    let isFile: boolean
+    try { isFile = statSync(full).isFile() } catch { continue }
+    if (!isFile) continue
+    if (!isWithinRoot(full, pluginRoot)) {
+      warnings.push(tMain('toolsHub.plugins.warnings.hookFileEscapedRoot', { file: entry.name }))
+      continue
+    }
+    ;(off ? disabled : active).push(full)
+  }
+  return { active: active.sort(), disabled: disabled.sort() }
 }
 
 /** 规范 §7.1:skills/ 只扫直接子目录,含 SKILL.md 的算一个技能 */
@@ -321,8 +360,10 @@ function listPluginSkillNames(skillsDir: string): string[] {
 /** 单个插件目录的完整发现流程(manifest 校验→skills 枚举→mcp.json 解析)。导出供单测以 fixture 目录直测。 */
 export function scanPluginDir(dir: string, dirName: string, disabled: Set<string>): ScannedPlugin {
   const rejected = (reason: string, warnings: string[] = []): ScannedPlugin => ({
-    info: { name: dirName, dir, enabled: false, skillNames: [], mcpServerNames: [], warnings, invalid: reason },
-    mcpServers: []
+    info: { name: dirName, dir, enabled: false, skillNames: [], mcpServerNames: [], hookNames: [], warnings, invalid: reason },
+    mcpServers: [],
+    hookFiles: [],
+    disabledHookFiles: []
   })
 
   const manifestPath = join(dir, 'plugin.json')
@@ -368,6 +409,20 @@ export function scanPluginDir(dir: string, dirName: string, disabled: Set<string
     }
   }
 
+  // hooks/(缺失 = 无规矩组件,非错误;存在但逃出根 = 该组件无效)
+  let hookFiles: string[] = []
+  let disabledHookFiles: string[] = []
+  const hooksCandidate = join(dir, 'hooks')
+  if (existsSync(hooksCandidate) && statSync(hooksCandidate).isDirectory()) {
+    if (isWithinRoot(hooksCandidate, dir)) {
+      const scannedHooks = scanHooksDir(hooksCandidate, dir, warnings)
+      hookFiles = scannedHooks.active
+      disabledHookFiles = scannedHooks.disabled
+    } else {
+      warnings.push(tMain('toolsHub.plugins.warnings.hooksEscapedRoot'))
+    }
+  }
+
   return {
     info: {
       name: manifest.name,
@@ -378,10 +433,13 @@ export function scanPluginDir(dir: string, dirName: string, disabled: Set<string
       enabled,
       skillNames,
       mcpServerNames: mcpServers.map(s => s.serverName),
+      hookNames: hookFiles.map(f => f.slice(f.lastIndexOf(sep) + 1).replace(/\.[^.]+$/, '')),
       warnings
     },
     skillsDir,
-    mcpServers
+    mcpServers,
+    hookFiles,
+    disabledHookFiles
   }
 }
 
@@ -414,6 +472,16 @@ export function listPlugins(): PluginInfo[] {
   return scanAllPlugins().map(p => p.info)
 }
 
+/** 完整扫描结果(含文件路径),供 hook-registry 列规矩清单;UI 只该拿 listPlugins */
+export function listScannedPlugins(): ScannedPlugin[] {
+  return scanAllPlugins()
+}
+
+/** 当前被停用的插件名集合(读 plugins.config.json) */
+export function getDisabledPluginNames(): Set<string> {
+  return new Set(loadPluginsConfig().disabled)
+}
+
 /** 供 skill-manager 注入 loadSkills 的 skillPaths(仅启用且有效的插件) */
 export function listPluginSkillDirs(): string[] {
   return scanAllPlugins()
@@ -426,6 +494,16 @@ export function extractPluginNameFromSkillDir(skillBaseDir: string): string | un
   const root = getPluginsRootDir() + sep
   if (!skillBaseDir.startsWith(root)) return undefined
   return skillBaseDir.slice(root.length).split(sep)[0] || undefined
+}
+
+/** 供 hook-registry 加载的规矩文件清单(仅启用且有效的插件),按插件名、文件名排序 */
+export function listPluginHookFiles(): { pluginName: string; file: string }[] {
+  const result: { pluginName: string; file: string }[] = []
+  for (const p of scanAllPlugins()) {
+    if (p.info.invalid || !p.info.enabled) continue
+    for (const file of p.hookFiles) result.push({ pluginName: p.info.name, file })
+  }
+  return result.sort((a, b) => a.pluginName.localeCompare(b.pluginName) || a.file.localeCompare(b.file))
 }
 
 /** 供 mcp-manager 连接的插件 MCP server 清单(仅启用且有效的插件),server 名带 `<plugin>:` 前缀 */

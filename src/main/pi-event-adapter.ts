@@ -8,6 +8,9 @@ import { StreamingJsonExtractor } from './streaming-json-extractor'
 import { compactSubagentCardData } from './tool-content-compactor'
 import { capToolResultText } from './context-window-policy'
 import type { AgentEvent as OpenPipalAgentEvent } from './agent-runtime/events'
+import { randomUUID } from 'crypto'
+import type { StoredMessage } from './conversation-store'
+import type { HookNotice } from '../shared/hook-contract'
 import { tMain } from './main-i18n'
 import { sanitizeQuestionsPreview } from '../shared/safe-svg'
 
@@ -246,6 +249,21 @@ export function normalizeQuestionsV2Items(rawQuestions: any[]): Record<string, a
 export type TranscriptEntry =
   | { kind: 'text'; content: string }
   | { kind: 'tool'; toolName: string; toolCallId?: string; content: string; toolArgs?: string; searchResults?: string }
+  /** 规矩文件写入后加载器的结论——桌面端由渲染层落成 inject-notice/hook，无渲染层的两条路在这里接住 */
+  | { kind: 'hook'; notice: HookNotice }
+
+/** 与渲染层 chatStore.onHookNotice 落盘的形状一致：inject-notice/hook，不进模型载荷 */
+export function hookNoticeToStoredMessage(notice: HookNotice, timestamp: number): StoredMessage {
+  return {
+    id: randomUUID(),
+    role: 'assistant',
+    content: notice.status === 'ok' ? notice.description : (notice.error || notice.description),
+    timestamp,
+    messageKind: 'inject-notice',
+    messageSubtype: 'hook',
+    hookNotice: notice
+  }
+}
 
 /**
  * 从 agentChat 事件流收集这一轮的落盘素材（无渲染层的落盘方，如 scheduler / ACP 用）。
@@ -292,6 +310,10 @@ export function createTranscriptCollector(): {
       // 时间戳取事件到达时刻而非落盘时刻：它同时是 UI 的“agent 开跑”锚点（groupTurns.ts）。
       else if (event.type === 'runtime_context' && typeof event.text === 'string' && event.text) {
         runtimeContext = { text: event.text, timestamp: Date.now() }
+      }
+      else if (event.type === 'hook_notice' && event.notice && typeof event.notice === 'object') {
+        commit()
+        entries.push({ kind: 'hook', notice: event.notice as HookNotice })
       }
       else if (event.type === 'tool_end') {
         commit() // 兜底：适配器没来得及 flush 时也不让正文错位到工具之后

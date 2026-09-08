@@ -49,6 +49,11 @@ This repository carries three built-in agents: the **default OpenPipal Agent**, 
   one); any Model Context Protocol server connects, with Context7 and DeepWiki as presets; and
   the command-line tools already on your machine, such as `gh`, `node` and `npm`, are available
   as tools.
+- **Rules** — say once how something should always be done — "mask student names before
+  reading a grade sheet" — and the Agent writes it down as a small hook file inside a plugin.
+  From the next turn on, every tool call passes through the rule: it can rewrite arguments,
+  block the call or amend the result. The conversation shows a note when a rule is set, and
+  the Plugins page lists every rule with a switch.
 - **Automation** — run a task once, or keep it running on a cron-style schedule or a webhook,
   each run in a fresh conversation or accumulating in one.
 - **Subagents** — an Agent can split a job across Subagents, and each Subagent's conversation

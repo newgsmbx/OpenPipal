@@ -113,6 +113,27 @@ MCP 工具通过 Pi Agent 的 `beforeToolCall` hook **统一经过分类器检�
 2. **参数中的文件路径同样受 Layer 3 硬性边界约束**
 3. 所有 MCP 工具对所有角色开放（角色白名单不过滤 MCP 工具——这是设计决策，因为 MCP 工具已经有安全分类器保护）
 
+## 用户规矩（hooks）
+
+> 源文件：`src/main/hooks/`、`src/main/agent-runtime/pi-core-tool-adapter.ts`
+
+用户可以让 Agent 把一句话的要求（"以后读成绩表先把学生名字遮掉"）写成插件目录下的一个
+TypeScript 文件（`~/.openpipal/plugins/<name>/hooks/*.ts`）。它们是**用户自己机器上、自己目录里
+的代码**，信任级别与用户装的插件、MCP 服务器相同；在主进程里执行，能改工具入参、拦下调用、
+补改工具结果、追加系统提示。边界：
+
+- **规矩在授权器之前跑，授权器审的是改过之后的最终参数**：改出来的参数先按工具 schema 复验，
+  再走同一套分类器 / 确认 / 路径边界。规矩不能放宽任何一层，也不能推翻宿主的 terminate。
+- **规矩自己要用工具（`ctx.callTool`）走同一道授权**，与模型直接调用无差别。
+- **规矩拦下调用写审计**：`RESULT=hook_blocked`，带原因。
+- **规矩出错一律放行**（fail-open）并在对话里报告——规矩是便利层，不是安全层；安全层始终是
+  分类器与沙箱。
+- **规矩文件不能 import 任何值模块**（`require` 直接抛错），只做纯逻辑；每次调用带独立超时。
+- 关闭：文件改名加 `.off`（插件页的开关就是这样做的），或环境变量 `OPENPIPAL_DISABLE_HOOKS=1`
+  整体停用。
+
+回归：`tests/unit/pi-core-hook-composition.test.ts`、`tests/unit/hook-chain.test.ts`
+
 ## 权限审批流程
 
 ### 桌面模式（Electron）
@@ -154,6 +175,7 @@ MCP 工具通过 Pi Agent 的 `beforeToolCall` hook **统一经过分类器检�
 - [ ] 新增的网络操作是否有数据泄露风险？
 - [ ] 是否需要更新敏感路径黑名单？
 - [ ] 是否需要更新允许的工作目录？
+- [ ] 新增的 hook 事件或 `ctx` 能力，是否仍在授权器之前完成、授权器看到的是最终参数？
 
 ## OS 级沙箱（sandbox-runtime）
 
@@ -262,6 +284,7 @@ objects.githubusercontent.com、raw.githubusercontent.com、pypi.org、files.pyt
 ```
 [2026-03-31T10:00:00.000Z] TOOL=bash ARGS={"command":"ls -la"} RESULT=safe SANDBOX=true
 [2026-03-31T10:00:01.000Z] TOOL=write ARGS={"path":"./test.ts"} RESULT=safe SANDBOX=true
+[2026-09-07T10:00:02.000Z] TOOL=read ARGS={"path":"./grades.xlsx"} RESULT=hook_blocked REASON=被规矩「读成绩表前先遮名字」拦下 SANDBOX=true
 ```
 
 日志使用非阻塞写入（`appendFile`），不影响工具执行性能。

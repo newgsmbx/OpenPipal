@@ -3,6 +3,8 @@ import { ElectronAPI } from '@electron-toolkit/preload'
 import type { LocalePreference, LocaleState } from '../shared/i18n/contract'
 import type { AppFollowingUpdateResult, AppSettingsState } from '../shared/app-following-contract'
 import type { AcpStatus } from '../shared/acp-status-contract'
+import type { HookEntry, HookNotice, HookToggleResult } from '../shared/hook-contract'
+import type { MemoryNotice } from '../shared/memory-notice-contract'
 
 interface TargetAppStatus {
   connected: boolean
@@ -324,6 +326,12 @@ interface OpenPipalAPI {
   }) => void) => () => void
   /** runtime-context 快照原文：渲染层据此落盘隐藏消息，保证下轮回放与实发字节一致 */
   onRuntimeContext?: (callback: (conversationId: string, text: string) => void) => () => void
+  /** 规矩文件写入后加载器的结论（对话流一行提醒的数据源） */
+  onHookNotice?: (callback: (conversationId: string | null, notice: HookNotice) => void) => () => void
+  /** 所有插件里的规矩清单（含被关掉的 .off 与停用插件里的）；拿不到清单的端（浏览器插件）返回 null */
+  listHooks?: () => Promise<HookEntry[] | null>
+  /** 文件式开关：改名 `<file>` ↔ `<file>.off` */
+  setHookEnabled?: (file: string, enabled: boolean) => Promise<HookToggleResult>
   /** 今日按模型用量/成本（卡片展开时拉一次） */
   getTodayUsage?: () => Promise<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }>>
   // 对话标题更新通知
@@ -365,12 +373,8 @@ interface OpenPipalAPI {
   triggerTaskNow?: (id: string) => Promise<{ ok: boolean; error?: string }>
   onTaskExecuted?: (callback: (taskId: string, result: any, silent?: boolean) => void) => () => void
   // 记忆更新通知
-  onMemoryUpdated?: (callback: (event: {
-    type: 'extracted' | 'dreamed'
-    memories?: Array<{ name: string; type: string; scope: string }>
-    actionsApplied?: number
-    summary?: string
-  }) => void) => () => void
+  /** 记忆提取 / 整理的结论：落到 conversationId 那个会话的胶囊，空 = 当前会话 */
+  onMemoryUpdated?: (callback: (conversationId: string | null, notice: MemoryNotice) => void) => () => void
   // 会话级权限
   /** 不传 = 全清；传 conversationId 只清该会话（多会话并发下别误伤后台会话） */
   clearSessionApprovals?: (conversationId?: string) => void
@@ -424,7 +428,7 @@ interface OpenPipalAPI {
   /** 删除用户导入/自建技能（builtin / plugin / mcp 来源不适用） */
   deleteSkill: (name: string) => Promise<{ ok: true } | { ok: false; error: string }>
   // Agent Plugins 插件管理（标准包:plugin.json + skills/ + mcp.json）
-  listPlugins: () => Promise<Array<{ name: string; dir: string; version?: string; description?: string; author?: string; enabled: boolean; skillNames: string[]; mcpServerNames: string[]; warnings: string[]; invalid?: string }>>
+  listPlugins: () => Promise<Array<{ name: string; dir: string; version?: string; description?: string; author?: string; enabled: boolean; skillNames: string[]; mcpServerNames: string[]; hookNames: string[]; warnings: string[]; invalid?: string }>>
   /** 一次调用完成 定位→校验→落盘→刷新;同名冲突返回 needsOverwrite,UI 确认后带 overwrite 重调 */
   installPlugin: (source: { type: 'folder'; path: string } | { type: 'github'; url: string }, opts?: { overwrite?: boolean }) => Promise<
     | { ok: true; installed: Array<{ name: string; version?: string; skillCount: number; mcpServerCount: number; warnings: string[] }>; skipped: Array<{ name: string; reason: string }> }

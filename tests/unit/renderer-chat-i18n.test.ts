@@ -16,7 +16,8 @@ import { piMessagesToChatMessages } from '../../src/renderer/src/components/mess
 const CHAT_FILES = [
   'src/renderer/src/components/InputBar.tsx',
   'src/renderer/src/components/ChatPanel.tsx',
-  'src/renderer/src/components/MemoryNotice.tsx',
+  'src/renderer/src/components/messages/MemoryNoticeRow.tsx',
+  'src/renderer/src/components/messages/HookNoticeRow.tsx',
   'src/renderer/src/components/MessageBubble.tsx',
   'src/renderer/src/components/StreamingInlinePreview.tsx',
   'src/renderer/src/components/MermaidBlock.tsx',
@@ -224,7 +225,7 @@ describe('renderer chat i18n', () => {
     const permission = read('src/renderer/src/components/PermissionModal.tsx')
     const bash = read('src/renderer/src/components/messages/BashOutputCard.tsx')
     const codeExecution = read('src/renderer/src/components/messages/CodeExecutionCard.tsx')
-    const memoryNotice = read('src/renderer/src/components/MemoryNotice.tsx')
+    const memoryNotice = read('src/renderer/src/components/messages/MemoryNoticeRow.tsx')
     const mermaid = read('src/renderer/src/components/MermaidBlock.tsx')
     const searchResult = read('src/renderer/src/components/messages/SearchResultCard.tsx')
     const screenshot = read('src/renderer/src/components/messages/ScreenshotCard.tsx')

@@ -207,6 +207,7 @@ export function installWebApiShim(): void {
         // 上下文用量圆环——浏览器端事件已到位，UI 先不接（桌面端优先）
         case 'context_usage': emit('context-usage', cid, { promptTokens: data.promptTokens, contextWindow: data.contextWindow, budget: data.budget, compacted: data.compacted, usage: data.usage, segments: data.segments }); break
         case 'runtime_context': emit('runtime-context', cid, data.text); break
+        case 'hook_notice': emit('hook-notice', cid, data.notice); break
         // 浏览器写操作的权限确认气泡(与桌面 IPC permission:inline-request 对齐)。
         // data.request 即完整 PermissionRequestData(含 conversationId)。
         case 'permission': emit('permission-request-inline', data.request); break
@@ -366,6 +367,11 @@ export function installWebApiShim(): void {
     onQuestionsV2Delta: (cb: Callback) => on('questions-v2-delta', cb),
     onContextUsage: (cb: Callback) => on('context-usage', cb),
     onRuntimeContext: (cb: Callback) => on('runtime-context', cb),
+    onHookNotice: (cb: Callback) => on('hook-notice', cb),
+    // 规矩清单与开关是桌面端的事（文件在用户机器上）；浏览器端只收提醒，不管理。
+    // 返回 null 而不是 []：空数组会被当成"清单里没有这条 = 文件已删除"
+    listHooks: async () => null,
+    setHookEnabled: async () => ({ ok: false as const, error: 'unsupported' }),
     getTodayUsage: async () => [],
 
     // 内联权限确认(浏览器写操作)。收:SSE 的 permission 事件 → 渲染层弹气泡;

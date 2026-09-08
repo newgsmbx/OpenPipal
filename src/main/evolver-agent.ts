@@ -4,10 +4,11 @@
  * 用一个 Pi Agent（带 Unix 工具）替代原来的单次 LLM 调用，
  * 直接 read/write/grep 文件完成 workspace 创建和进化。
  *
- * 三个能力（对应三个 skill）：
+ * 四个能力（对应四个 skill）：
  *   save-agent:      从对话创建新 Agent（0→1）
  *   dream:           进化已有 Agent（1→N），夜间深度整理
  *   extract-memory:  每轮对话后的高频短增量记忆提取
+ *   set-rule:        把前台递交的一条规矩写成 hook 文件（hooks/rule-writer 排队调用）
  */
 
 import { Agent } from '@earendil-works/pi-agent-core'
@@ -22,6 +23,9 @@ import { loadSkills, formatSkillsForPrompt } from '../../node_modules/@earendil-
 import type { ChatMessage } from './agent-runtime/contracts'
 import { dataPath } from './data-root'
 import { createHardBoundaryHook } from './pi-security'
+import { getBuiltInSkillsDir } from './openpipal-skill-sources'
+import { formatDialogue } from './dialogue-format'
+import type { RuleWriterInput } from './hooks/rule-writer'
 import type { EvolverTaskCandidate } from './evolver-task-migration'
 import { buildEvolverTools } from './evolver-tools'
 
@@ -98,22 +102,9 @@ function safeRead(path: string): string {
 
 // ---- Conversation Formatter ----
 
-/**
- * 只格式化对话正文。工具轨迹（role:'tool'）自"跨轮回放"起就活在 messages 里，而下面
- * 一律把非 user 标成"[助手]"——不先滤掉的话，工具回执会被当成助手说过的话写进长期
- * 记忆/agent.md，且一轮 agentic 的工具消息足以把真正说了偏好的那句挤出窗口。
- * 滤在切片**之前**：切完再滤等于窗口已经被工具消息吃掉了。
- */
+/** 对话正文的判据与格式只有一处（dialogue-format.ts）；这里只定 Evolver 的窗口与截断 */
 function formatConversation(messages: ChatMessage[], maxMessages = 40): string {
-  return messages
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .slice(-maxMessages)
-    .map(m => {
-      const role = m.role === 'user' ? '用户' : '助手'
-      const content = m.content.slice(0, 1200)
-      return `[${role}] ${content}`
-    })
-    .join('\n\n')
+  return formatDialogue(messages, { maxMessages, maxChars: 1200 })
 }
 
 // ---- Core Runner ----
@@ -282,13 +273,9 @@ export async function evolverExtract(
   roleName: string,
   conversationId?: string
 ): Promise<{ success: boolean; error?: string }> {
-  // 只喂对话正文。工具轨迹（role:'tool'）自"跨轮回放"起就活在模型载荷里，而 formatConversation
-  // 把所有非 user 一律标成"[助手]"——工具回执会被当成助手说过的话写进长期记忆，
-  // 且一轮 agentic 的工具消息能把真正说了偏好的那句挤出 20 条窗口（说了记不住的成因）。
-  const dialogue = messages.filter(m => m.role === 'user' || m.role === 'assistant')
-  // 短增量：只看最近 20 条消息，避免重复处理已 extract 过的部分
-  const recentMessages = dialogue.slice(-20)
-  const conversationText = formatConversation(recentMessages, 20)
+  // 短增量：只看最近 20 条对话正文（滤掉非正文再切，见 dialogue-format.ts），避免重复处理已 extract 过的部分
+  const RECENT = 20
+  const conversationText = formatConversation(messages, RECENT)
 
   const convMemSection = conversationMemoryDir
     ? `Conversation memory directory: ${conversationMemoryDir}`
@@ -300,7 +287,7 @@ ${convMemSection}
 Role: ${roleName}
 ${conversationId ? `Source conversation ID: ${conversationId}` : ''}
 
-Recent conversation (last ${recentMessages.length} messages):
+Recent conversation (last ${RECENT} messages):
 
 ${conversationText}`
 
@@ -310,4 +297,33 @@ ${conversationText}`
   return runEvolver('extract-memory', userMessage, sandboxRoot, [], {
     assignedRoot: sandboxRoot,
   })
+}
+
+/**
+ * 把一条规矩写成 hook 文件（前台 set_rule 工具递交，hooks/rule-writer 排队调用；入参形状就是它的 RuleWriterInput）。
+ *
+ * cwd / assignedRoot 都是 local-rules 插件根：Evolver 只能在这个目录里读写。
+ * 类型声明随消息附上——边界之外的文件它读不到，不能让它去翻 hook-creator 的 references。
+ */
+export async function evolverSetRule(input: RuleWriterInput): Promise<{ success: boolean; error?: string }> {
+  const previous = input.previousError
+    ? `\nPrevious error (the file you wrote last time failed to load — fix exactly this):\n${input.previousError}\n`
+    : ''
+  const userMessage = `Skill: set-rule
+Rules directory: ${input.rulesDir}
+Description: ${input.description}
+Details: ${input.details}
+Role: ${input.roleName || 'general'}
+${previous}
+Type declarations for 'openpipal/hooks' (authoritative; nothing else may be imported):
+
+\`\`\`ts
+${readHookAuthorTypes()}
+\`\`\``
+  return runEvolver('set-rule', userMessage, input.rulesDir, [], { assignedRoot: input.rulesDir })
+}
+
+function readHookAuthorTypes(): string {
+  return safeRead(join(getBuiltInSkillsDir(), 'hook-creator', 'references', 'hook-types.d.ts'))
+    || '(type declarations unavailable — follow the template in the skill exactly)'
 }

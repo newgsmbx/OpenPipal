@@ -1,12 +1,11 @@
 import { useRef, useEffect, useCallback, useState, useMemo, DragEvent } from 'react'
 import { MessageBubble } from './MessageBubble'
-import { MemoryNotice } from './MemoryNotice'
 import { StreamingArea } from './StreamingArea'
 import { useAppStore } from '../stores/appStore'
 import { useChatStore } from '../stores/chatStore'
 import { useAgentStore } from '../stores/agentStore'
 import { Bot, Focus } from 'lucide-react'
-import { isRegeneratableAssistantMessage } from '../chat/messages'
+import { countDialogueMessages, isRegeneratableAssistantMessage } from '../chat/messages'
 import { groupTurns } from '../chat/groupTurns'
 import { ProcessGroup } from './ProcessGroup'
 import { useTranslation } from 'react-i18next'
@@ -114,7 +113,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
   const onSend = useCallback((content: string) => sendMessage(content, roleName), [sendMessage, roleName])
   const onRegenerate = regenerate
   const onEditAndResend = editAndResend
-  const messageCount = messages.length
+  const messageCount = useMemo(() => countDialogueMessages(messages), [messages])
   // 最后一条消息的 id —— 传给 MessageBubble 判断"是否是当前流式输出的最后一条 assistant 消息"
   // (原来每条 MessageBubble 各自订阅 store 算这个,导致任意新消息追加时全部历史消息重渲染;
   // 现在在此单点算好,作为稳定 prop 逐条传入,未命中的消息拿到的始终是同一个 false)。
@@ -434,9 +433,6 @@ export function ChatPanel({ appName }: ChatPanelProps) {
           </div>
         )
       })}
-
-      {/* 记忆更新通知 */}
-      {!isStreaming && <MemoryNotice />}
 
       {/* 保存 Agent 成功提示 */}
       {savedAgentName && (

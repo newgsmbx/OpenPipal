@@ -43,8 +43,8 @@ files:
   - '!node_modules/@vscode/ripgrep-darwin-*/**'
   - 'node_modules/@vscode/ripgrep-darwin-${arch}/**'
 asarUnpack:
-  # esbuild 同步 API 用 new Worker(__filename) 自举 + spawn @esbuild/<平台>/bin/esbuild，
-  # worker_threads 与 exec 都吃不了 asar 内路径 —— 两个包必须整体落成真实文件
+  # esbuild 同步 API 在 worker 线程里 spawn @esbuild/<平台>/bin/esbuild，worker 里没有 asar 改写；
+  # env.ts 在装机版把 ESBUILD_BINARY_PATH 指到这里 unpacked 出来的真实文件 —— 两个包必须整体落成真实文件
   - '**/node_modules/esbuild/**'
   - '**/node_modules/@esbuild/**'
   # sharp / @napi-rs/canvas 的平台包里是 .node 加一串 .dll/.dylib，OS 加载器只认真实文件。

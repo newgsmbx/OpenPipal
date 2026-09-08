@@ -169,6 +169,15 @@ const api = {
     ipcRenderer.on('runtime-context', handler)
     return () => ipcRenderer.removeListener('runtime-context', handler)
   },
+  // 规矩（插件 hooks/）：加载器的结论 → 对话流一枚胶囊（本轮探针带 cid；后台 set_rule 写的 cid 可为空 = 当前会话）；
+  // 插件页清单与文件式开关
+  onHookNotice: (callback: (conversationId: string | null, notice: any) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, cid: string | null, notice: any): void => callback(cid, notice)
+    ipcRenderer.on('chat:hook-notice', handler)
+    return () => ipcRenderer.removeListener('chat:hook-notice', handler)
+  },
+  listHooks: (): Promise<any[]> => ipcRenderer.invoke('hooks:list'),
+  setHookEnabled: (file: string, enabled: boolean): Promise<any> => ipcRenderer.invoke('hooks:set-enabled', file, enabled),
   // 今日按模型用量/成本（卡片展开时拉一次；聚合在读侧，见 usage-log.ts）
   getTodayUsage: (): Promise<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }>> =>
     ipcRenderer.invoke('usage:get-today'),
@@ -592,13 +601,9 @@ const api = {
   restoreMemory: (filePath: string): Promise<boolean> => ipcRenderer.invoke('memory:restore', filePath),
 
   // 记忆更新通知（支持 extracted 和 dreamed 两种类型）
-  onMemoryUpdated: (callback: (event: {
-    type: 'extracted' | 'dreamed'
-    memories?: Array<{ name: string; type: string; scope: string }>
-    actionsApplied?: number
-    summary?: string
-  }) => void): (() => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, event: any): void => callback(event)
+  // 记忆提取 / 整理的结论（shared/memory-notice-contract）：落到 conversationId 那个会话的胶囊，空 = 当前会话
+  onMemoryUpdated: (callback: (conversationId: string | null, notice: any) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, cid: string | null, notice: any): void => callback(cid, notice)
     ipcRenderer.on('memory:updated', handler)
     return () => ipcRenderer.removeListener('memory:updated', handler)
   },

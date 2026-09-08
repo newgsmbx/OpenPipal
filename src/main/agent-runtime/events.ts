@@ -1,4 +1,5 @@
 import type { ConversationGoal } from '../goal-checker'
+import type { HookNotice } from '../hooks/hook-types'
 
 /** Product-owned event protocol consumed by desktop IPC, HTTP/ACP, and scheduler. */
 export type AgentEvent =
@@ -66,6 +67,11 @@ export type AgentEvent =
    * 消息位置紧跟本轮用户消息；regenerate 重跑时由渲染层替换旧快照。
    */
   | { type: 'runtime_context'; text: string }
+  /**
+   * 规矩文件刚被工具写入，加载器当场给出的结论。渲染层落成对话流里一行
+   * messageKind='inject-notice' / messageSubtype='hook' 的提醒（持久化、不发给模型）。
+   */
+  | { type: 'hook_notice'; notice: HookNotice }
   | {
       type: 'context_usage'
       promptTokens: number

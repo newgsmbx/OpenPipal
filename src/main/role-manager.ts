@@ -86,6 +86,8 @@ export const COMMON_TOOLS = [
   'execute_code',
   // 任务管理（定时 / webhook / 门控）
   'manage_task',
+  // 定规矩：把用户"以后都要…"的要求递交后台写成 hook（hooks/set-rule-tool）
+  'set_rule',
   // Phase 6d：环境感知 + 内容呈现（渐进式披露——AI 按需调 get_environment）
   'get_environment',
   'present_to_user',

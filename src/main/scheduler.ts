@@ -30,7 +30,7 @@ import {
   beginConversationOperation,
   finishConversationOperation
 } from './conversation-service'
-import { createTranscriptCollector } from './pi-event-adapter'
+import { createTranscriptCollector, hookNoticeToStoredMessage } from './pi-event-adapter'
 import {
   getWorkspace,
   readAllWorkspaceTriggers,
@@ -544,6 +544,8 @@ async function runTaskInConversation(
     }
     for (const entry of transcript) {
       const timestamp = Date.now()
+      // 定时任务里定下的规矩也要留那行提醒（带撤销入口），否则只有插件页看得到
+      if (entry.kind === 'hook') { toAppend.push(hookNoticeToStoredMessage(entry.notice, timestamp)); continue }
       toAppend.push(entry.kind === 'tool'
         ? {
           id: randomUUID(),

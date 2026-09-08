@@ -17,6 +17,7 @@
 
 import { completeSimple } from '@earendil-works/pi-ai/compat'
 import type { ChatMessage } from './agent-runtime/contracts'
+import { formatDialogue } from './dialogue-format'
 import { getPiModel, ensurePiApiKey, getEffectiveModelConfig, createModelPayloadAdapter, auxCompletionTuning } from './config-manager'
 import { stripJsonFence } from './simple-completion'
 import { getWorkspace, writeWorkspaceMemory, writeAgentMd } from './agent-workspace-store'
@@ -70,17 +71,9 @@ ${existingMemories || '（暂无记忆）'}
   内容`
 }
 
-/** 只格式化对话正文：非 user 一律标"[助手]"，工具轨迹混进来就成了助手的伪证词。
- *  滤在切片之前——切完再滤，窗口已经被工具消息吃掉了（口径同 evolver-agent） */
+/** 对话正文的判据与格式只有一处（dialogue-format.ts）；这里只定 dream 的窗口与截断 */
 function formatConversation(messages: ChatMessage[], maxMessages = 20): string {
-  return messages
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .slice(-maxMessages)
-    .map(m => {
-      const role = m.role === 'user' ? '用户' : '助手'
-      return `[${role}] ${m.content.slice(0, 600)}`
-    })
-    .join('\n\n')
+  return formatDialogue(messages, { maxMessages, maxChars: 600 })
 }
 
 export async function executeAgentDreaming(

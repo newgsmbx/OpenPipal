@@ -1,6 +1,7 @@
 import { Bot, PanelLeft, PanelRight, FolderOpen } from 'lucide-react'
 import { TargetAppStatus } from '../types'
 import { useChatStore } from '../stores/chatStore'
+import { countDialogueMessages } from '../chat/messages'
 import { useAgentStore } from '../stores/agentStore'
 import { useAppStore } from '../stores/appStore'
 import { useWorkspaceStore } from '../stores/workspaceStore'
@@ -16,7 +17,7 @@ interface StatusBarProps {
 export function StatusBar({ status }: StatusBarProps) {
   const { t } = useTranslation()
   const isStreaming = useChatStore(s => s.isStreaming)
-  const messageCount = useChatStore(s => s.messages.length)
+  const messageCount = useChatStore(s => countDialogueMessages(s.messages))
   const activeConversationId = useChatStore(s => s.activeConversationId)
   const activeWorkspaceId = useChatStore(s => s.activeWorkspaceId)
   const { createFromConversation, creating: creatingAgent } = useAgentStore()

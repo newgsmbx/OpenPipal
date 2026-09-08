@@ -21,6 +21,8 @@ import { generateTitle } from './title-generator'
 import { isSafeConversationStorageId, loadConversationAttachment } from './attachment-store'
 import { loadConfig } from './config-manager'
 import { isReplayableToolMessage } from './tool-trail'
+import type { HookNotice } from '../shared/hook-contract'
+import type { MemoryNotice } from '../shared/memory-notice-contract'
 import type { ConversationGoal } from './goal-checker'
 import { dataPath } from './data-root'
 import { publishConversationChange } from './conversation-events'
@@ -95,6 +97,10 @@ export interface StoredMessage {
   screenshotRef?: string
   /** mcpAppPayload 已卸载的附件文件名（payload 本身经 normalizeStoredMessage 透传，此处不建模） */
   mcpAppRef?: string
+  /** 规矩文件写入后加载器的结论（inject-notice/hook 那一行的数据）；纯展示，不进模型载荷 */
+  hookNotice?: HookNotice
+  /** 记忆提取 / 整理的结论（inject-notice/memory 胶囊的数据）；纯展示，不进模型载荷 */
+  memoryNotice?: MemoryNotice
 }
 
 export interface InitialAsset {

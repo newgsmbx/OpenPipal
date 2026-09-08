@@ -11,7 +11,8 @@ describe('bundled ripgrep for the OS sandbox', () => {
   it('resolves the platform binary shipped with the app', () => {
     const rg = resolveBundledRipgrep()
     expect(rg, `${platformPkg} 没装上——npm install 按 os/cpu 挑可选依赖，别用 --no-optional`).not.toBeNull()
-    expect(rg).toContain(platformPkg)
+    // Windows 上路径是反斜杠，先统一成 posix 再比（2026-09-06 Windows CI 实撞：值对、断言错）
+    expect(rg!.split('\\').join('/')).toContain(platformPkg)
     expect(fs.statSync(rg!).isFile()).toBe(true)
     if (process.platform !== 'win32') {
       expect(() => fs.accessSync(rg!, fs.constants.X_OK)).not.toThrow()

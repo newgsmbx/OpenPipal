@@ -60,6 +60,7 @@ import { exportArtifactHandoff } from './dc-handoff-export'
 import { mp4FormatGateMessage, pptxFormatGateMessage, handoffFormatGateMessage, projectZipFormatGateMessage, formatMp4ValidationText, formatPptxValidationText, formatHandoffValidationText, formatFileValidationText, type Mp4ProbeData } from './export-artifact-validate'
 import { sliceArtifactContent, formatArtifactReadHeader, formatArtifactTruncationNote, formatArtifactOffsetOutOfRangeNote } from './read-artifact-slice'
 import type { ChatSource } from './agent-runtime/contracts'
+import { createSetRuleTool } from './hooks/set-rule-tool'
 import { dataPath } from './data-root'
 import { resolveCodeExecutionLanguage } from './code-execution-language'
 import { isRenderArtifactConsoleNoise } from './render-artifact-diagnostics'
@@ -1901,6 +1902,8 @@ export function buildOpenPipalProductTools(
     createWebSearchTool(),
     createAskUserTool(askUserResolver),
     createQuestionsV2Tool(),
+    // 定规矩：只递交要求，文件由后台 Evolver 写（hooks/set-rule-tool）
+    createSetRuleTool({ conversationId: overrides?.conversationId, roleName }),
     createGenerateDocumentTool(overrides?.workspaceId),
     createVisualizerTool(),
     createArtifactTool(overrides?.conversationId, roleName, overrides?.roleBrief),

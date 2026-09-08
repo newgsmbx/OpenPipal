@@ -4,6 +4,8 @@ import { Puzzle, Wrench, Zap, Plus, Trash2, Loader2, CheckCircle, XCircle, Serve
 import { SkillsHub } from './SkillsHub'
 import { resolveCliToolDisplay } from '../i18n/cliToolDisplay'
 import { toDisplayError, type DisplayError } from '../utils/mainError'
+import { useHookStore } from '../stores/hookStore'
+import type { HookEntry } from '../types'
 
 // 概念口径:「插件」=Agent Plugins 标准包(技能+工具的集合);「工具」=MCP 服务器+CLI;「技能」=SKILL.md
 type HubTab = 'plugins' | 'skills' | 'tools'
@@ -656,6 +658,7 @@ interface PluginInfoUi {
   enabled: boolean
   skillNames: string[]
   mcpServerNames: string[]
+  hookNames: string[]
   warnings: string[]
   invalid?: string
 }
@@ -689,6 +692,31 @@ function PluginsTab() {
   }, [])
 
   useEffect(() => { loadPlugins() }, [loadPlugins])
+
+  // 规矩（插件 hooks/）：清单随插件列表一起刷；开关是文件改名，改完再拉一次
+  const hookEntries = useHookStore(s => s.entries)
+  const refreshHooks = useHookStore(s => s.refresh)
+  const setRuleEnabled = useHookStore(s => s.setEnabled)
+  useEffect(() => { void refreshHooks() }, [plugins, refreshHooks])
+  // 开关失败的原因就地显示几秒（比如同名生效版已存在），不吞掉
+  const [ruleErrors, setRuleErrors] = useState<Record<string, string>>({})
+  const toggleRule = async (rule: HookEntry): Promise<void> => {
+    const result = await setRuleEnabled(rule.file, rule.status === 'off')
+    if (result.ok) return
+    const message = result.error || t('toolsHub.plugins.ruleToggleFailed')
+    setRuleErrors(prev => ({ ...prev, [rule.id]: message }))
+    setTimeout(() => setRuleErrors(prev => {
+      if (prev[rule.id] !== message) return prev
+      const next = { ...prev }
+      delete next[rule.id]
+      return next
+    }), 6000)
+  }
+  const rulesFor = (pluginName: string): HookEntry[] => hookEntries.filter(rule => rule.pluginName === pluginName)
+  const ruleStatusLabel = (rule: HookEntry): string =>
+    rule.status === 'ok' ? t('toolsHub.plugins.ruleStatusOk')
+      : rule.status === 'error' ? t('toolsHub.plugins.ruleStatusError')
+        : t('toolsHub.plugins.ruleStatusOff')
 
   const runInstall = async (source: PluginInstallSourceUi, overwrite = false) => {
     setIsInstalling(true)
@@ -841,8 +869,39 @@ function PluginsTab() {
                   <p className="text-[11px] text-surface-400 mt-1 break-all">
                     {p.invalid
                       ? t('toolsHub.plugins.invalid', { reason: p.invalid })
-                      : t('toolsHub.plugins.contents', { skillCount: p.skillNames.length, serverCount: p.mcpServerNames.length })}
+                      : t('toolsHub.plugins.contents', { skillCount: p.skillNames.length, serverCount: p.mcpServerNames.length })
+                        + (rulesFor(p.name).length > 0 ? t('toolsHub.plugins.contentsRules', { hookCount: rulesFor(p.name).length }) : '')}
                   </p>
+                  {!p.invalid && rulesFor(p.name).length > 0 && (
+                    <ul className="mt-2 space-y-1" data-testid="plugin-rules">
+                      {rulesFor(p.name).map(rule => (
+                        <li key={rule.id} className="flex items-center gap-2 text-[12px] min-w-0">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${rule.status === 'ok' ? 'bg-green-400' : rule.status === 'error' ? 'bg-red-400' : 'bg-surface-300'}`} />
+                          <span className={`min-w-0 truncate ${rule.status === 'off' ? 'text-surface-400' : 'text-surface-600'}`} title={rule.file}>
+                            {rule.description || rule.id}
+                          </span>
+                          <span className="text-[10px] text-surface-400 shrink-0">{ruleStatusLabel(rule)}</span>
+                          {rule.status === 'error' && rule.error && (
+                            <span className="text-[10px] text-red-500 truncate min-w-0" title={rule.error}>{rule.error}</span>
+                          )}
+                          {ruleErrors[rule.id] && (
+                            <span className="text-[10px] text-red-500 truncate min-w-0" data-testid="plugin-rule-error" title={ruleErrors[rule.id]}>{ruleErrors[rule.id]}</span>
+                          )}
+                          {rule.offReason !== 'plugin' && (
+                            <button
+                              onClick={() => { void toggleRule(rule) }}
+                              role="switch"
+                              aria-checked={rule.status !== 'off'}
+                              aria-label={t('toolsHub.plugins.ruleToggleNamed', { name: rule.description || rule.id })}
+                              className={`ml-auto relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${rule.status !== 'off' ? 'bg-brand-500' : 'bg-surface-200'}`}
+                            >
+                              <span className={`pointer-events-none inline-block h-3 w-3 mt-0.5 transform rounded-full bg-white shadow transition duration-200 ${rule.status !== 'off' ? 'translate-x-[14px]' : 'translate-x-0.5'}`} />
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {p.warnings.length > 0 && (
                     <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 flex items-start gap-1">
                       <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />

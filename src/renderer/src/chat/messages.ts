@@ -359,6 +359,13 @@ export function isRegeneratableAssistantMessage(message: ChatMessage): boolean {
   return Boolean(normalized.content?.trim())
 }
 
+/** 对话历史有几条：胶囊提醒（inject-notice）不算——"对话较长"与"保存为 Agent"都按这个数 */
+export function countDialogueMessages(messages: ChatMessage[]): number {
+  let count = 0
+  for (const message of messages) if (message.messageKind !== 'inject-notice') count++
+  return count
+}
+
 export function shouldIncludeInTranscriptExport(message: ChatMessage): boolean {
   const normalized = normalizeChatMessage(message)
   if (normalized.messageSubtype === 'runtime-interrupted') return false

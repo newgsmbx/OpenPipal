@@ -49,6 +49,9 @@ import type { VoiceConfig } from './config-manager'
 import { listSkillsMeta, setSkillDisabled, getSkillDetails, reloadSkills } from './skill-manager'
 import { importScan, importApply, deleteUserSkill, type ImportSource, type ImportApplyPayload } from './skill-import'
 import { listPlugins } from './plugin-manager'
+import { listHookEntries, setHookFileEnabled } from './hooks/hook-registry'
+import { setRuleNoticeSink, setRuleWriter } from './hooks/rule-writer'
+import type { MemoryNotice } from '../shared/memory-notice-contract'
 import { installPlugin, uninstallPlugin, togglePlugin, type PluginInstallSource } from './plugin-import'
 import { getMcpServerStatus, addMcpServer, removeMcpServer, testMcpConnection, authorizeMcpServer, revokeMcpServerAuth, isMcpServerBindingVisible } from './mcp-manager'
 import { callMcpToolFromApp } from './mcp-app-tool-call'
@@ -222,6 +225,21 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // 注入桌面权限处理器（dialog 弹窗）。Runtime Host 会在惰性加载前暂存，
   // 并在选中的 Runtime 可用后统一装配。
   setAgentRuntimePermissionHandler(createDesktopPermissionHandler(getWindow))
+
+  // 后台写规矩：写手是 Evolver 的 set-rule 技能（惰性加载，同 evolverSaveAgent 的口径）；
+  // 结论走与本轮探针同一条通道（chat:hook-notice）→ 渲染层落成胶囊；cid 为空时落当前会话
+  setRuleWriter((input) => import('./evolver-agent').then((m) => m.evolverSetRule(input)))
+  setRuleNoticeSink((request, notices) => {
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return
+    for (const notice of notices) win.webContents.send('chat:hook-notice', request.conversationId ?? null, notice)
+  })
+
+  // 记忆提取 / 整理的结论 → 渲染层落成胶囊（inject-notice/memory）。四个来源一个出口，形状只有 shared 那一份
+  const emitMemoryNotice = (conversationId: string | null | undefined, notice: MemoryNotice): void => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) win.webContents.send('memory:updated', conversationId ?? null, notice)
+  }
 
   // 界面语言由 Main 持有唯一事实源：renderer 只消费解析后的状态。
   // 广播/原生菜单刷新由 locale-manager 的统一订阅者负责，避免多个入口各自补副作用。
@@ -501,6 +519,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
             // 快照原文 → 渲染层落盘隐藏 runtime-context 消息（下轮回放字节一致，缓存前缀才稳）
             mainWindow.webContents.send('runtime-context', cid, event.text)
             break
+          case 'hook_notice':
+            // 规矩文件刚写入、加载器给出的结论 → 对话流里一行「已定下规矩 / 规矩没生效」
+            mainWindow.webContents.send('chat:hook-notice', cid, event.notice)
+            break
         }
       }
     } catch (err: any) {
@@ -585,38 +607,23 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     // 自动记忆提取（fire-and-forget，不阻塞 UI）——会话角色关闭记忆（design）则跳过
     if (isAutoMemoryEnabled() && messages.length >= 2 && !shouldSkipMemoryExtraction(conversationId, executionRoleName)) {
       executeExtraction(messages, conversationId || null, executionRoleName!, (saved) => {
-        const win = getWindow()
-        if (win && !win.isDestroyed() && saved.length > 0) {
-          win.webContents.send('memory:updated', { type: 'extracted', memories: saved })
-        }
+        if (saved.length > 0) emitMemoryNotice(conversationId, { type: 'extracted', memories: saved })
       }).catch((err) => {
         console.warn('[Memory] 自动提取失败:', err.message)
       })
 
       // Auto Dream：检查是否该执行定期整理（门控条件在 dreamer 内部判断）
       executeAutoDream((result) => {
-        const win = getWindow()
-        if (win && !win.isDestroyed() && result.actionsApplied > 0) {
-          win.webContents.send('memory:updated', {
-            type: 'dreamed',
-            actionsApplied: result.actionsApplied,
-            summary: result.summary
-          })
-        }
+        if (result.actionsApplied > 0) emitMemoryNotice(conversationId, { type: 'dreamed', actionsApplied: result.actionsApplied, summary: result.summary })
       }).catch(() => {})
     }
 
     // Agent Workspace dreaming（fire-and-forget）
     if (workspaceId && messages.length >= 2) {
       executeAgentDreaming(workspaceId, messages, (result) => {
-        const win = getWindow()
-        if (win && !win.isDestroyed() && (result.memories > 0 || result.agentMdUpdated)) {
-          win.webContents.send('memory:updated', {
-            type: 'agent-dreamed',
-            workspaceId,
-            memories: result.memories,
-            agentMdUpdated: result.agentMdUpdated
-          })
+        // 独立 Agent 的整理：memories 是条数，agent.md 改了再算一项
+        if (result.memories > 0 || result.agentMdUpdated) {
+          emitMemoryNotice(conversationId, { type: 'dreamed', actionsApplied: result.memories + (result.agentMdUpdated ? 1 : 0) })
         }
       }).catch(() => {})
     }
@@ -1036,6 +1043,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle('skills:import-scan', (_event, source: ImportSource) => importScan(source))
   ipcMain.handle('skills:import-apply', (_event, payload: ImportApplyPayload) => importApply(payload))
   ipcMain.handle('skills:delete', (_event, name: string) => deleteUserSkill(name))
+
+  // ---- 规矩（插件 hooks/）：清单 + 文件式开关 ----
+  ipcMain.handle('hooks:list', () => listHookEntries())
+  ipcMain.handle('hooks:set-enabled', (_event, file: string, enabled: boolean) => setHookFileEnabled(file, enabled))
 
   // ---- Agent Plugins 插件管理 IPC ----
   ipcMain.handle('plugins:list', () => listPlugins())
@@ -1771,10 +1782,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     const roleName = resolveExecutionRoleName({ conversationId })
     if (shouldSkipMemoryExtraction(conversationId, roleName)) return
     executeExtraction(history as any, conversationId || null, roleName, (saved) => {
-      const win = getWindow()
-      if (win && !win.isDestroyed() && saved.length > 0) {
-        win.webContents.send('memory:updated', { type: 'extracted', memories: saved })
-      }
+      if (saved.length > 0) emitMemoryNotice(conversationId, { type: 'extracted', memories: saved })
     })
   })
 

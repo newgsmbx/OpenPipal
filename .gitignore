@@ -55,3 +55,7 @@ __pycache__/
 /index.js
 /output/
 *-brand-assets.zip
+
+# 规矩功能真机验收（tests/e2e/hook-rule-live.spec.ts）留下的证据：截图之外还有隔离 HOME 里的
+# 插件目录、规矩文件、run.log。全是每跑一次就整批重写的过程物，同上不进版本。
+tests/artifacts/hook-rule-live/

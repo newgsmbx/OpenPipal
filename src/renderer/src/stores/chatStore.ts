@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import { ChatMessage, ChatMessageKind, VoiceTranscriptItem, FileAttachmentData, PermissionRequestData } from '../types'
+import { ChatMessage, ChatMessageKind, VoiceTranscriptItem, FileAttachmentData, PermissionRequestData, HookNoticePayload, MemoryNotice } from '../types'
 import { useArtifactStore } from './artifactStore'
+import { useHookStore } from './hookStore'
 import { useVisualizerStore } from './visualizerStore'
 import { liveStream } from './liveStreamStore'
 import { useWorkspaceStore } from './workspaceStore'
@@ -623,14 +624,6 @@ function findLatestToolIndex(messages: ChatMessage[], toolName: string): number 
   return -1
 }
 
-export interface MemoryNotification {
-  type: 'extracted' | 'dreamed'
-  memories?: { name: string; type: string; scope: string }[]
-  actionsApplied?: number
-  summary?: string
-  timestamp: number
-}
-
 /**
  * 用户在 agent 跑的时候挂起的待发消息。
  * - 进入流程：流式中按 Enter → enqueuePending()
@@ -704,8 +697,6 @@ interface ChatState {
     pendingQuestion?: PersistedPendingQuestion
     [key: string]: any
   } | null
-  // 记忆更新通知（对话流内联显示）
-  memoryNotification: MemoryNotification | null
   // Agent 调用 questions_v2 时的 pending 追踪——UI 通过 artifactStore 渲染
   pendingQuestionsV2: PendingQuestion | null
   /** Comment 点选模式下，选中元素的 <mentioned-element> 片段列表（支持连点多选）——
@@ -1100,7 +1091,6 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
   activeAgentId: null,
   activeWorkspaceId: null,
   conversationConfig: null,
-  memoryNotification: null,
   pendingQuestionsV2: null,
   pendingMentions: [],
   pendingAnnotations: [],
@@ -1159,7 +1149,6 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       // 水合出生配置（含创建时钉住的 modelPresetId）——此前硬编码 null 导致"+"路径的
       // chat:send 载荷不带钉住,全靠 agent-overrides 磁盘兜底(层次评审:两处防线意图对齐)
       conversationConfig: conv.config ?? null,
-      memoryNotification: null,
       conversations: list,
       messages: [],
       pendingQuestionsV2: null,
@@ -2948,15 +2937,37 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       )
     }
 
-    // 记忆更新事件
+    // 胶囊提醒（记忆 / 规矩）：落在它发生的会话里、发生的位置上，长期可见；不发给模型、不算对话历史。
+    // 目标会话就是当前会话 → 进内存 + 常规落盘；不是（用户切走了 / 后台会话 / 事件没带会话就落当前）
+    // → 直接追加到它自己的会话文件（与后台工具消息同一条路：主进程按会话串行写入）
+    const persistNoticeMessage = (cid: string | null | undefined, message: ChatMessage, label: string): void => {
+      const target = cid || get().activeConversationId
+      if (!target) return
+      if (get().activeConversationId === target) {
+        set(s => s.activeConversationId !== target ? s : { messages: normalizeChatMessages([...s.messages, message]) })
+        debouncedSave(get)
+        return
+      }
+      enqueueBackgroundPersistence(target, async () => {
+        const result = await window.api.appendMessages(target, normalizeChatMessages([message]))
+        assertPersistenceSucceeded(result, `append ${label}`)
+      }).catch((err: unknown) => console.warn(`[chatStore] ${label} 落盘失败:`, err))
+    }
+
+    // 记忆提取 / 整理完成 → 一枚「已记住…」胶囊
     if (window.api.onMemoryUpdated) {
       cleanups.push(
-        window.api.onMemoryUpdated((event: Omit<MemoryNotification, 'timestamp'>) => {
-          const ts = Date.now()
-          set({ memoryNotification: { ...event, timestamp: ts } })
-          setTimeout(() => {
-            set(s => s.memoryNotification?.timestamp === ts ? { memoryNotification: null } : {})
-          }, 8000)
+        window.api.onMemoryUpdated((cid: string | null, notice: MemoryNotice) => {
+          if (!notice || (notice.type !== 'extracted' && notice.type !== 'dreamed')) return
+          persistNoticeMessage(cid, {
+            id: `memory-notice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant',
+            content: notice.type === 'extracted' ? (notice.memories || []).map(m => m.name).join('、') : (notice.summary || ''),
+            messageKind: 'inject-notice',
+            messageSubtype: 'memory',
+            memoryNotice: notice,
+            timestamp: Date.now()
+          }, 'memory notice')
         })
       )
     }
@@ -2998,7 +3009,26 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       )
     }
 
-    // runtime-context 快照落盘：紧跟本轮末条用户消息之后插入/替换隐藏消息。
+    // 规矩的结论（模型当场写的文件：本轮探针；后台 set_rule → Evolver 写的：写完送来，cid 可能为空）
+    // → 一枚「已定下规矩 / 规矩没生效」胶囊，带「查看 / 撤销」。
+    if ((window.api as any).onHookNotice) {
+      cleanups.push(
+        (window.api as any).onHookNotice((cid: string | null, notice: HookNoticePayload) => {
+          if (!notice || typeof notice.hookId !== 'string') return
+          persistNoticeMessage(cid, {
+            id: `hook-notice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant',
+            content: notice.status === 'ok' ? notice.description : (notice.error || notice.description),
+            messageKind: 'inject-notice',
+            messageSubtype: 'hook',
+            hookNotice: notice,
+            timestamp: Date.now()
+          }, 'hook notice')
+          void useHookStore.getState().refresh()
+        })
+      )
+    }
+
     // 落盘副本与主进程实发字节一致 → 下轮回放命中前缀缓存（见 pi-agent-service 注释）。
     // regenerate 重跑同一轮时，事件会再发一次——替换旧快照而不是追加，防止纸条堆积。
     if ((window.api as any).onRuntimeContext) {

@@ -16,7 +16,7 @@ import { setActiveBrowserUrl } from './browser-policy-store'
 import { resolvePdfIntoCache, fillPdfPageContentFromCache } from './pdf-context'
 import { homedir } from 'os'
 import { randomUUID } from 'crypto'
-import { createTranscriptCollector } from './pi-event-adapter'
+import { createTranscriptCollector, hookNoticeToStoredMessage } from './pi-event-adapter'
 import {
   listConversations, createConversation, getConversationMessages, getConversationMessagesSerialized, getConversation,
   appendMessages, deleteConversation, updateConversationTitle, updateConversationRole, updateConversationConfig, replaceMessages,
@@ -1136,6 +1136,8 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
               })
             }
             for (const entry of transcript) {
+              // ACP 会话里定下的规矩也要留那行提醒（带撤销入口）
+              if (entry.kind === 'hook') { toAppend.push(hookNoticeToStoredMessage(entry.notice, now)); continue }
               toAppend.push(entry.kind === 'tool'
                 ? {
                   id: randomUUID(), role: 'tool', content: entry.content, timestamp: now,

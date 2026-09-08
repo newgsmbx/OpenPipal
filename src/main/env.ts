@@ -1,4 +1,5 @@
 import { config } from 'dotenv'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
 import { getDevelopmentEnvPath } from './credential-paths'
@@ -8,6 +9,24 @@ import { getDevelopmentEnvPath } from './credential-paths'
 // 放在首个被 import 的模块顶部,保证先于一切 console 输出生效。
 for (const stream of [process.stdout, process.stderr]) {
   stream?.on?.('error', () => {})
+}
+
+// esbuild 同步 API（artifact-store / ds-compile / hooks 的 transformSync）默认 new Worker 自举、
+// 在 worker 线程里 spawn 平台二进制。Electron 的 asar 改写只装在主线程：worker 线程里 spawn
+// app.asar/…/bin/esbuild 报 `spawn ENOTDIR`，dev 下 node_modules 是真实目录、永不复现
+// （2026-09-08 装机版 1.1.2 实撞：规矩全部"编译失败"，jsx 产物预编译同样中招）。
+// 修法：装机版把二进制路径直接指到 app.asar.unpacked 里的真实文件——worker 常驻，每次编译约 1.5ms。
+// 找不到那个文件才退回关 worker 线程：主线程 execFileSync 有 asar 改写、一定能跑，但每次编译都
+// spawn 一个进程（约 17ms），设计稿几十个模块串行编译会卡住主线程。esbuild 在模块加载时读这两个
+// 变量，必须先于任何 require('esbuild')——本模块是入口第二个 import。
+// 装机版验法只有一种：scripts/qa/packaged-esbuild-probe.mjs 在 App 自己的主进程里跑真编译。
+if (app.isPackaged && !process.env.ESBUILD_BINARY_PATH && !process.env.ESBUILD_WORKER_THREADS) {
+  const binary = join(
+    process.resourcesPath, 'app.asar.unpacked', 'node_modules', '@esbuild', `${process.platform}-${process.arch}`,
+    ...(process.platform === 'win32' ? ['esbuild.exe'] : ['bin', 'esbuild'])
+  )
+  if (existsSync(binary)) process.env.ESBUILD_BINARY_PATH = binary
+  else process.env.ESBUILD_WORKER_THREADS = '0'
 }
 
 // 在打包后从 app 目录加载，开发时从项目根加载

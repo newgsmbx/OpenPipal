@@ -64,10 +64,16 @@ import {
 import { createOpenPipalPiCoreModels } from './pi-core-models'
 import { buildPiCoreAgentTools } from './pi-core-tool-bridge'
 import {
-  buildPiCoreAfterToolCallPatch,
+  composePiCoreAfterToolCall,
+  composePiCoreBeforeToolCall,
   isPiAgentEvent,
   PiCoreToolAuthorizer
 } from './pi-core-tool-adapter'
+import { hasHandlers, runBeforeAgentStartHooks, type HookChain, type HookToolCaller } from '../hooks/hook-chain'
+import { formatHookNoticeForModel, loadActiveHooks, probeHookChanges, probeHookFileWrite, refreshHookSignatures, snapshotHookSignatures } from '../hooks/hook-registry'
+import { isRuleWriteActive } from '../hooks/rule-writer'
+import { createHookToolCaller } from '../hooks/hook-tool-bridge'
+import type { HookContext } from '../hooks/hook-types'
 import {
   buildOpenPipalRuntimeContext,
   prepareOpenPipalSystemPrompt,
@@ -108,6 +114,41 @@ interface ActiveTurnObservation {
   sequence: number
   startedAt: number
   firstModelEvent: boolean
+}
+
+/** 本轮用户说的话：最后一条真正的用户消息（跳过 runtime-context 快照与任务触发这类内部消息） */
+function lastUserPromptText(history: ChatMessage[]): string {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index]
+    if (message.role !== 'user') continue
+    if (message.messageKind === 'runtime-context' || message.messageKind === 'task-trigger') continue
+    return typeof message.content === 'string' ? message.content : ''
+  }
+  return ''
+}
+
+/**
+ * 装配本轮生效的用户规矩。加载失败不影响对话（fail-open），但每一条没生效的都要留证据。
+ * 没有任何规矩时返回 undefined——下游代码路径与从前逐字节一致。
+ */
+async function resolveHookChain(
+  ctx: Omit<HookContext, 'callTool'>,
+  conversationShort: string,
+  callTool: HookToolCaller
+): Promise<HookChain | undefined> {
+  let active: Awaited<ReturnType<typeof loadActiveHooks>>
+  try {
+    active = await loadActiveHooks()
+  } catch (error) {
+    console.warn(`[Hooks] conv=${conversationShort} 规矩加载异常，本轮不带规矩：${safeErrorMessage(error)}`)
+    return undefined
+  }
+  for (const failure of active.failures) {
+    console.warn(`[Hooks] conv=${conversationShort} ${failure.id} 没生效：${failure.error}`)
+  }
+  if (active.hooks.length === 0) return undefined
+  console.log(`[Hooks] conv=${conversationShort} 生效 ${active.hooks.length} 条规矩：${active.hooks.map((hook) => hook.id).join(', ')}`)
+  return { hooks: active.hooks, ctx, callTool }
 }
 
 function splitUserMessage(message: AgentMessage | undefined): PromptInput | undefined {
@@ -364,7 +405,7 @@ async function* runPiCoreAgentChat(
     modelConfig
   })
   const skillCatalog = await loadPiCoreSkillCatalog(preparedPrompt.skillContext)
-  const systemPrompt = preparedPrompt.render(skillCatalog.promptSection)
+  let systemPrompt = preparedPrompt.render(skillCatalog.promptSection)
   const modelSupportsThinking = modelConfig.supportsThinking ?? !!(model as any).reasoning
   const userWantsThinking = overrides?.thinkingEnabled !== false
   const selectedLevel = overrides?.thinkingLevel && supportsEffortDial(modelConfig)
@@ -382,6 +423,39 @@ async function* runPiCoreAgentChat(
     disabledTools: workspace.disabledTools,
     mcpServers: workspace.mcpServers
   })
+  // 用户规矩（插件 hooks/）：工具装配完才装——规矩借的就是这一轮的工具；
+  // 在预算估算之前跑 before_agent_start，改过的提示词按改过的算预算
+  const hookChain = await resolveHookChain({
+    conversationId: overrides?.conversationId,
+    workingDir: workspace.workingDir,
+    roleName: executionRoleName,
+    source,
+    signal: lifecycleSignal
+  }, conversationShort, createHookToolCaller({
+    tools: builtTools.tools,
+    // 与 createBundle 里的 PiCoreToolAuthorizer 同一份授权选项：规矩能做的 = 助手能做的
+    authorization: {
+      conversationId: overrides?.conversationId,
+      onConfirmation: permissionHandler,
+      scope: { workspaceId: workspace.workspaceId, workingDir: workspace.workingDir },
+      tier: overrides?.permissionTier
+    },
+    onCall: (log) => console.log(
+      `[Hooks] conv=${conversationShort} 规矩调工具 ${log.toolName}`
+      + (log.blocked ? ` 被拒：${log.blocked}` : log.error ? ` 出错：${log.error}` : '')
+      + `（${log.ms}ms）`
+    )
+  }))
+  // 本轮的规矩文件指纹基线：探针只对它报变化。shell 命令开跑前还会再刷一次（见 onToolStart），
+  // 所以别的会话/插件页在命令开跑之前动的文件不会被算成"这轮刚定的"
+  const hookBaseline = snapshotHookSignatures()
+  if (hookChain && hasHandlers(hookChain, 'before_agent_start')) {
+    systemPrompt = await runBeforeAgentStartHooks(hookChain, {
+      type: 'before_agent_start',
+      prompt: lastUserPromptText(history),
+      systemPrompt
+    })
+  }
   // 用量卡分区：组装期估算一次，与 legacy 共用同一份分桶策略（context-usage-stats.ts）
   const segmentEstimate = buildSegmentBaseline({
     systemPrompt,
@@ -570,21 +644,46 @@ async function* runPiCoreAgentChat(
           thinkingLevel === 'off' ? undefined : { reasoningEffort: thinkingLevel }
         )
       },
-      beforeToolCall: (event, runSignal) => {
-        if (interruptedByQuestion) {
-          return Promise.resolve({
-            block: true,
-            reason: '等待用户回答，已阻止同批次中的后续工具调用',
-            terminate: true
-          })
+      // 顺序：问答中断 → 用户规矩 → 宿主安全员审最终参数（见 pi-core-tool-adapter.ts）
+      beforeToolCall: composePiCoreBeforeToolCall({
+        authorizer,
+        hookChain,
+        isInterrupted: () => interruptedByQuestion,
+        // shell 命令开跑前把规矩文件指纹刷到"此刻"：跑完的探针只报这条命令期间出现的变化，
+        // 别的会话、插件页在此之前动的文件不会被算到这条会话头上
+        onToolStart: (toolName) => {
+          if (toolName === 'bash' || toolName === 'powershell') refreshHookSignatures(hookBaseline)
         }
-        return authorizer.authorize(event, runSignal)
-      },
-      afterToolCall: async (event) => {
-        const patch = buildPiCoreAfterToolCallPatch(event)
-        if (patch?.terminate) interruptedByQuestion = true
-        return patch
-      },
+      }),
+      afterToolCall: composePiCoreAfterToolCall({
+        hookChain,
+        onInterrupt: () => { interruptedByQuestion = true },
+        // 模型刚写完的文件若是规矩：加载器当场给结论——对话流一行提醒 + 回给模型一句话
+        probeWrittenFile: async (toolName, args) => {
+          let notices: Awaited<ReturnType<typeof probeHookFileWrite>>
+          if (toolName === 'write' || toolName === 'edit') {
+            if (typeof args.path !== 'string') return undefined
+            notices = await probeHookFileWrite(args.path, workspace.workingDir, undefined, hookBaseline)
+          } else if (toolName === 'bash' || toolName === 'powershell') {
+            if (isRuleWriteActive()) {
+              // 后台（set_rule → Evolver）正在写规矩：此刻多出来的文件是它的，结论由它自己送；
+              // 这里只把基线推到"此刻"，不然下一条 shell 命令还会把它报成本轮建的
+              refreshHookSignatures(hookBaseline)
+              return undefined
+            }
+            // 模型用 shell 建的文件不知道路径，拿本轮基线比一遍：新的、改过的都当场加载
+            notices = await probeHookChanges(hookBaseline)
+          } else {
+            return undefined
+          }
+          if (notices.length === 0) return undefined
+          for (const notice of notices) {
+            console.log(`[Hooks] conv=${conversationShort} 规矩${notice.status === 'ok' ? '已生效' : '没生效'}：${notice.hookId}${notice.error ? ` — ${notice.error}` : ''}`)
+            eventQueue.push({ type: 'hook_notice', notice })
+          }
+          return notices.map(formatHookNoticeForModel).join('\n')
+        }
+      }),
       shouldStopAfterTurn: () => interruptedByQuestion,
       toolExecution: 'sequential',
       steeringMode: 'one-at-a-time',

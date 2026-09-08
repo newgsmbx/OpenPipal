@@ -11,6 +11,7 @@
 
 import { completeSimple } from '@earendil-works/pi-ai/compat'
 import type { ChatMessage } from './agent-runtime/contracts'
+import { formatDialogue } from './dialogue-format'
 import { getPiModel, ensurePiApiKey, getEffectiveModelConfig, createModelPayloadAdapter, auxCompletionTuning } from './config-manager'
 import { stripJsonFence } from './simple-completion'
 
@@ -160,19 +161,9 @@ description: 什么时候该用这个技能（触发条件描述）
 - 宁缺勿滥：没有明确信号就返回空数组/空字符串`
 }
 
-/** 只格式化对话正文：非 user 一律标"[助手]"，工具轨迹混进来就成了助手的伪证词。
- *  滤在切片之前——切完再滤，窗口已经被工具消息吃掉了（口径同 evolver-agent） */
+/** 对话正文的判据与格式只有一处（dialogue-format.ts）；这里只定提取的窗口与截断 */
 function formatConversation(messages: ChatMessage[], maxMessages = 30): string {
-  const recent = messages
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .slice(-maxMessages)
-  return recent
-    .map(m => {
-      const role = m.role === 'user' ? '用户' : '助手'
-      const content = m.content.slice(0, 800)
-      return `[${role}] ${content}`
-    })
-    .join('\n\n')
+  return formatDialogue(messages, { maxMessages, maxChars: 800 })
 }
 
 // ---- Extraction ----

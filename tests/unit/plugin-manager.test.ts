@@ -6,7 +6,7 @@
  * plugin-manager 不依赖 electron,直接以临时目录 fixture 驱动 scanPluginDir。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -171,5 +171,50 @@ describe('scanPluginDir:组件发现与失败边界', () => {
     expect(r.info.name).toBe('real-name')
     expect(r.info.enabled).toBe(false)
     expect(r.info.warnings.some(w => w.includes('不一致'))).toBe(true)
+  })
+})
+
+describe('scanPluginDir:hooks/ 规矩文件发现', () => {
+  it('只认直接子文件的 .ts/.js/.mjs/.cjs,跳过点文件、.d.ts、子目录与其他后缀', () => {
+    const dir = makePlugin({
+      'plugin.json': manifest(),
+      'hooks/mask-names.ts': 'export default () => {}',
+      'hooks/b-plain.js': 'module.exports = () => {}',
+      'hooks/c.mjs': 'export default () => {}',
+      'hooks/d.cjs': 'module.exports = () => {}',
+      'hooks/types.d.ts': 'export {}',
+      'hooks/.hidden.ts': 'x',
+      'hooks/README.md': '# no',
+      'hooks/nested/deep.ts': 'export default () => {}'
+    })
+    const r = scanPluginDir(dir, 'demo-plugin', NO_DISABLED)
+    expect(r.info.invalid).toBeUndefined()
+    expect(r.hookFiles).toEqual(['b-plain.js', 'c.mjs', 'd.cjs', 'mask-names.ts'].map(f => join(dir, 'hooks', f)))
+    expect(r.info.hookNames).toEqual(['b-plain', 'c', 'd', 'mask-names'])
+  })
+
+  it('没有 hooks/ 目录 = 没有规矩组件,不是错误', () => {
+    const dir = makePlugin({ 'plugin.json': manifest() })
+    const r = scanPluginDir(dir, 'demo-plugin', NO_DISABLED)
+    expect(r.hookFiles).toEqual([])
+    expect(r.info.hookNames).toEqual([])
+    expect(r.info.warnings).toEqual([])
+  })
+
+  it('软链指向插件根外的规矩文件被跳过并告警', () => {
+    const outside = join(root, 'outside.ts')
+    writeFileSync(outside, 'export default () => {}', 'utf-8')
+    const dir = makePlugin({ 'plugin.json': manifest(), 'hooks/inside.ts': 'export default () => {}' })
+    symlinkSync(outside, join(dir, 'hooks', 'escape.ts'))
+    const r = scanPluginDir(dir, 'demo-plugin', NO_DISABLED)
+    expect(r.hookFiles).toEqual([join(dir, 'hooks', 'inside.ts')])
+    expect(r.info.warnings.some(w => w.includes('escape.ts'))).toBe(true)
+  })
+
+  it('整包无效时 hookFiles 为空', () => {
+    const dir = makePlugin({ 'hooks/a.ts': 'export default () => {}' })
+    const r = scanPluginDir(dir, 'demo-plugin', NO_DISABLED)
+    expect(r.info.invalid).toBeTruthy()
+    expect(r.hookFiles).toEqual([])
   })
 })

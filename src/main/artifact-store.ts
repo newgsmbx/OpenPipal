@@ -27,9 +27,9 @@ import { dataPath } from './data-root'
  * ⚠️ esbuild 保持运行时懒 require，且正式包依赖两条打包配置，勿动：
  * 1) esbuild/typescript 必须在 dependencies（曾在 devDependencies → 装机版 asar 不含
  *    node_modules/esbuild → 每次 jsx 编译死于 Cannot find module，dev 下无法复现）；
- * 2) electron-builder.yml asarUnpack esbuild + @esbuild —— 其同步 API 用
- *    `new Worker(__filename)` 自举并 spawn 平台二进制，worker_threads 与 exec
- *    都要求真实文件路径，asar 内路径两者皆崩。
+ * 2) electron-builder.yml asarUnpack esbuild + @esbuild，且 env.ts 在装机版把 ESBUILD_BINARY_PATH
+ *    指到 unpacked 的真实二进制 —— 其同步 API 默认 `new Worker(__filename)` 自举、在 worker 线程里
+ *    spawn 平台二进制，而 Electron 的 asar 改写只装在主线程（装机版 1.1.2 实撞 `spawn ENOTDIR`）。
  * 历史实案（devDependencies 年代）：顶层 import 会被打进 out/main bundle，
  * __filename 指向应用 bundle → worker 启动即崩 → 主线程 Atomics.wait 永挂
  * （整窗冻结、Cmd+Q 无效、主线程 100% 采样停在 __psynch_cvwait）。

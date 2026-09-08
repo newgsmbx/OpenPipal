@@ -30,16 +30,21 @@ interface AppActions {
   toggleFocusStream: () => void
 }
 
+// 模块一加载就读 localStorage；纯 node 单测（i18n 用例经 MessageBubble → HookNoticeRow 间接引到本模块）
+// 没有这个全局，读不到就按默认值——正式运行时行为不变
+const readPref = (key: string): string | null =>
+  typeof localStorage === 'undefined' ? null : localStorage.getItem(key)
+
 export const useAppStore = create<AppState & AppActions>((set) => ({
   initialized: false,
   currentRole: null,
   allRoles: [],
   showSettings: false,
   showConversations: false,
-  theme: (localStorage.getItem('openpipal-theme') as ThemeMode) || 'system',
+  theme: (readPref('openpipal-theme') as ThemeMode) || 'system',
   activeView: 'chat' as ActiveView,
-  workspacePanelOpen: localStorage.getItem('openpipal-workspace-panel') !== 'false',
-  focusStream: localStorage.getItem('openpipal-focus-stream') !== 'false',
+  workspacePanelOpen: readPref('openpipal-workspace-panel') !== 'false',
+  focusStream: readPref('openpipal-focus-stream') !== 'false',
 
   init: async () => {
     const [initState, roles] = await Promise.all([
